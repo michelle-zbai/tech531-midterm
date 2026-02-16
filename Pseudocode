@@ -1,0 +1,65 @@
+    // 1. SENSE  PRESENCE
+    // Trigger ultrasonic sensor and calculate distance
+    distance = get_ultrasonic_distance()
+    
+    IF distance < 100cm:
+        local_presence = TRUE
+    ELSE:
+        local_presence = FALSE
+
+    // 2. BROADCAST STATE TO MQTT
+    // Let the other device know your current status
+    MQTT.publish("kompanion/userA/presence", local_presence)
+
+    // 3. RETRIEVE FRIEND'S STATE
+    // Check the latest presence value published by User B
+    friend_presence = MQTT.subscribe_latest("kompanion/userB/presence")
+
+    // 4. COORDINATED FEEDBACK LOOP
+    IF local_presence == TRUE AND friend_presence == TRUE:
+        // Trigger the "Presence" state
+        LED_Ring.set_color("WARM_AMBER")
+        LED_Ring.set_brightness(HIGH)
+        LED_Ring.start_animation("SOFT_PULSE")
+        PRINT("Synchronized Presence Detected: Emitting Warm Glow")
+
+    ELSE IF local_presence == TRUE AND friend_presence == FALSE:
+        // User is alone, show standard idle or communication colors
+        LED_Ring.set_color("NEUTRAL_WHITE")
+        LED_Ring.set_brightness(LOW)
+
+    ELSE:
+        // No one is present
+        LED_Ring.fade_to_black()
+END FUNCTION
+
+______________________________________________________________________________________________
+
+// RUNNING ON ESP32
+LOOP:
+    // 1. READ LOCAL SENSORS
+    is_present = read_ultrasonic_sensor() // True if user is < 100cm away
+    current_ph = read_ph_sensor()
+    current_temp = read_temp_sensor()
+
+    // 2. SEND LOCAL DATA TO CLOUD
+    MQTT.publish("kompanion/deviceA/status", {
+        "presence": is_present,
+        "needs_food": (current_ph > 4.5 OR current_temp < 20)
+    })
+
+    // 3. LISTEN FOR REMOTE DATA (From the other Device)
+    friend_data = MQTT.subscribe("kompanion/deviceB/status")
+
+    // 4. REACT
+    IF is_present AND friend_data.presence:
+        LED.set_mode("WARM_AMBER_GLOW") // Both are here!
+    
+    ELSE IF friend_data.needs_food:
+        LED.set_mode("PULSING_RED")     // Friend's SCOBY is hungry
+        IF user_taps_device():
+            MQTT.publish("kompanion/deviceB/command", "ACTIVATE_PUMP")
+    
+    ELSE:
+        LED.display_idle_vibe()
+END LOOP
